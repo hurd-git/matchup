@@ -1,0 +1,19 @@
+matchup includes or links against the following third-party software in its
+Windows binary distributions:
+
+OpenCV 4.12.0
+Copyright (C) 2000-2025, Intel Corporation, all rights reserved.
+Copyright (C) 2009-2011, Willow Garage Inc., all rights reserved.
+Copyright (C) 2009-2016, NVIDIA Corporation, all rights reserved.
+Copyright (C) 2010-2013, Advanced Micro Devices, Inc., all rights reserved.
+Copyright (C) 2015-2023, OpenCV Foundation, all rights reserved.
+Licensed under the Apache License, Version 2.0.
+https://github.com/opencv/opencv/blob/4.12.0/LICENSE
+
+pybind11
+Copyright (c) 2016 Wenzel Jakob and contributors.
+Licensed under a BSD-style license.
+https://github.com/pybind/pybind11/blob/v3.0.0/LICENSE
+
+NumPy is a runtime dependency and is not bundled in the wheel.
+https://numpy.org/

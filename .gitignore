@@ -1,0 +1,15 @@
+.venv/
+.wheel-test/
+.pytest_cache/
+.idea/
+__pycache__/
+*.py[cod]
+*.pyd
+*.dll
+*.egg-info/
+build/
+.build/
+.local-build/
+dist/
+wheelhouse/
+_skbuild/

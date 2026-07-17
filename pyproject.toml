@@ -1,0 +1,101 @@
+[build-system]
+requires = [
+    "scikit-build-core>=0.11.6",
+    "pybind11>=3.0.0",
+    "numpy>=1.26",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "matchup"
+version = "0.1.0"
+description = "Fast traditional image matching backed by C++ and OpenCV"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "hurd-git" },
+]
+keywords = ["computer-vision", "image-matching", "opencv", "sift"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+dependencies = [
+    "numpy>=1.26",
+]
+
+[project.urls]
+Homepage = "https://github.com/hurd-git/matchup"
+Repository = "https://github.com/hurd-git/matchup"
+Issues = "https://github.com/hurd-git/matchup/issues"
+Changelog = "https://github.com/hurd-git/matchup/blob/main/CHANGELOG.md"
+
+[dependency-groups]
+dev = [
+    "build>=1.2.2",
+    "cibuildwheel>=4.1.0; python_version >= '3.11'",
+    "cmake>=3.25",
+    "delvewheel>=1.11.2",
+    "pybind11>=3.0.0",
+    "pytest>=8.3.0",
+    "scikit-build-core>=0.11.6",
+    "twine>=6.1.0",
+]
+benchmark = [
+    "pillow>=10.0.0",
+]
+
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+build-dir = ".build/{wheel_tag}"
+cmake.build-type = "Release"
+wheel.packages = ["src/matchup"]
+sdist.include = [
+    "/CMakeLists.txt",
+    "/cpp/*.cpp",
+    "/src/matchup/*.py",
+    "/src/matchup/py.typed",
+    "/tests/*.py",
+    "/benchmarks/*.py",
+    "/LICENSE",
+    "/NOTICE",
+    "/README.md",
+    "/CHANGELOG.md",
+]
+sdist.exclude = [
+    ".build/**",
+    ".local-build/**",
+    ".pytest_cache/**",
+    ".venv/**",
+    ".wheel-test/**",
+    ".idea/**",
+    "**/__pycache__/**",
+    "**/*.py[cod]",
+    "build/**",
+    "dist/**",
+    "wheelhouse/**",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.cibuildwheel]
+build = "cp310-win_amd64 cp311-win_amd64 cp312-win_amd64 cp313-win_amd64 cp314-win_amd64"
+test-requires = ["pytest"]
+test-command = "pytest {project}/tests"
+
+[tool.cibuildwheel.windows]
+repair-wheel-command = "delvewheel repair --ignore-existing -w {dest_dir} {wheel}"
