@@ -1,4 +1,4 @@
-# matchup
+![matchup image matching demo](assets/matchup-readme-demo.png)
 
 `matchup` is a traditional computer-vision image matcher implemented in C++
 with a small Python API. It uses OpenCV SIFT, geometric verification, edge
