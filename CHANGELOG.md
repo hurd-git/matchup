@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- Publish to PyPI from a verified existing GitHub Release instead of rebuilding
+  the native distributions during the manual publishing workflow.
+
 ## 1.0.8 - 2026-07-19
 
 - Disable Intel IPP after single-threaded benchmarks showed a 70% to 79%

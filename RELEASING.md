@@ -24,8 +24,10 @@ Also create the `pypi` environment in the GitHub repository. The workflow has
 5. Create and push `v<version>`. The tag builds CPython 3.10 through 3.14
    Windows x64 wheels and an sdist, then creates the GitHub Release.
 6. Verify the GitHub Release artifacts.
-7. Run the `Release` workflow manually with `publish_pypi=true`. This rebuilds,
-   tests, and publishes the wheels and sdist through trusted publishing.
+7. Run the `Release` workflow manually with `publish_pypi=true`. The workflow
+   derives `v<version>` from `pyproject.toml`, downloads that existing GitHub
+   Release, verifies its asset names and metadata, and publishes it through
+   trusted publishing.
 
 PyPI versions and uploaded files cannot be replaced. Always verify the version
 and artifacts before running the publishing job.
