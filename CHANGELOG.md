@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## 1.0.8 - 2026-07-19
 
 - Disable Intel IPP after single-threaded benchmarks showed a 70% to 79%
   slowdown, a substantially larger wheel, and avoidable score differences.

@@ -1,6 +1,6 @@
 # Matchup image-matching implementation
 
-This document describes the current `matchup` 1.0.7 traditional computer-
+This document describes the current `matchup` 1.0.8 traditional computer-
 vision pipeline. It does not use neural-network models, file names, or learned
 sample labels. The public score is an engineering similarity in `[0.0, 1.0]`,
 not a probability and not a built-in classification threshold.

@@ -1,6 +1,6 @@
 # Matchup matching flowcharts
 
-These diagrams describe the current `matchup` 1.0.7 Python and C++ execution
+These diagrams describe the current `matchup` 1.0.8 Python and C++ execution
 paths. See [MATCHING_IMPLEMENTATION.md](MATCHING_IMPLEMENTATION.md) for detailed
 parameters and design notes.
 
