@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- Disable Intel IPP after single-threaded benchmarks showed a 70% to 79%
+  slowdown, a substantially larger wheel, and avoidable score differences.
+- Keep OpenCV's full SSE4.1, SSE4.2, AVX, FP16, and AVX2 CPU dispatch after
+  reduced-dispatch builds proved slower.
+- Disable OpenCV tracing and unused build backends while retaining zlib, which
+  is linked by `opencv_core`.
+
 ## 1.0.7 - 2026-07-18
 
 - Add aligned central-content confirmation to reject icons that share an outer
