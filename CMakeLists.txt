@@ -65,17 +65,29 @@ set(WITH_PTHREADS_PF OFF CACHE BOOL "" FORCE)
 set(WITH_EIGEN OFF CACHE BOOL "" FORCE)
 set(WITH_ITT OFF CACHE BOOL "" FORCE)
 set(OPENCV_DISABLE_THREAD_SUPPORT ON CACHE BOOL "" FORCE)
-set(OPENCV_SKIP_MSVC_PARALLEL ON CACHE BOOL "" FORCE)
+# Allow MSVC to compile OpenCV translation units in parallel. This only affects
+# build time; the extension still forces OpenCV to one thread at runtime.
+set(OPENCV_SKIP_MSVC_PARALLEL OFF CACHE BOOL "" FORCE)
 set(OPENCV_ENABLE_ALLOCATOR_STATS OFF CACHE BOOL "" FORCE)
 set(OPENCV_GENERATE_PKGCONFIG OFF CACHE BOOL "" FORCE)
 set(CPU_BASELINE SSE3 CACHE STRING "" FORCE)
 set(CPU_DISPATCH "SSE4_1;SSE4_2;AVX;FP16;AVX2" CACHE STRING "" FORCE)
+
+if(NOT MATCHUP_OPENCV_SOURCE_DIR
+    AND EXISTS "${CMAKE_BINARY_DIR}/opencv-src/CMakeLists.txt")
+    set(MATCHUP_OPENCV_SOURCE_DIR "${CMAKE_BINARY_DIR}/opencv-src")
+endif()
 
 if(MATCHUP_OPENCV_SOURCE_DIR)
     get_filename_component(
         MATCHUP_OPENCV_SOURCE_DIR
         "${MATCHUP_OPENCV_SOURCE_DIR}"
         ABSOLUTE
+    )
+    set(MATCHUP_OPENCV_SOURCE_DIR "${MATCHUP_OPENCV_SOURCE_DIR}"
+        CACHE PATH
+        "Optional local OpenCV source tree used instead of downloading OpenCV"
+        FORCE
     )
     if(NOT EXISTS "${MATCHUP_OPENCV_SOURCE_DIR}/CMakeLists.txt")
         message(FATAL_ERROR

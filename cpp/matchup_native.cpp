@@ -62,6 +62,18 @@ constexpr double kMinStrongGeometricScore = 0.9;
 constexpr double kMinStrongInlierSupport = 4.0;
 constexpr double kFullStrongInlierSupport = 8.0;
 constexpr double kMaxStrongInlierErrorAllowance = 0.105;
+constexpr double kCentralConfirmationMarginRatio = 0.25;
+constexpr int kMinCentralConfirmationInliers = 4;
+constexpr int kFullCentralConfirmationInliers = 7;
+constexpr double kCentralConfirmationConfidenceExponent = 2.0;
+constexpr double kCentralContentMarginRatio = 0.25;
+constexpr int kMinCentralContentEdgePixels = 32;
+constexpr double kCentralContentEdgeWarning = 0.30;
+constexpr double kCentralContentEdgeReject = 0.18;
+constexpr double kCentralContentAppearanceEdgeIgnore = 0.50;
+constexpr double kCentralContentErrorWarning = 0.095;
+constexpr double kCentralContentErrorReject = 0.13;
+constexpr double kMaxCentralContentPenalty = 0.8;
 
 double clamp01(double value) {
     return std::max(0.0, std::min(1.0, value));
@@ -299,6 +311,9 @@ cv::Scalar border_median(const cv::Mat& image) {
 cv::Mat pad_on_working_canvas(const cv::Mat& image) {
     if (image.rows > kWorkingSize || image.cols > kWorkingSize) {
         throw std::invalid_argument("working tile exceeds 64 x 64");
+    }
+    if (image.rows == kWorkingSize && image.cols == kWorkingSize) {
+        return image;
     }
     cv::Mat canvas(kWorkingSize, kWorkingSize, image.type(), border_median(image));
     const int top = (kWorkingSize - image.rows) / 2;
@@ -578,6 +593,9 @@ std::vector<cv::DMatch> deduplicate_matches(
     std::vector<cv::DMatch> accepted;
     std::vector<cv::Point2f> points_a;
     std::vector<cv::Point2f> points_b;
+    accepted.reserve(matches.size());
+    points_a.reserve(matches.size());
+    points_b.reserve(matches.size());
     const double radius_squared = kKeypointDeduplicationRadius * kKeypointDeduplicationRadius;
     for (const cv::DMatch& match : matches) {
         const cv::Point2f point_a = keypoints_a[match.queryIdx].pt;
@@ -623,13 +641,35 @@ struct DirectionalResult {
     cv::Mat transform;
     int inliers = 0;
     bool complete_spatial = false;
+    int central_inliers = 0;
 };
+
+int central_inlier_count(
+    const std::vector<cv::Point2f>& points_a,
+    const std::vector<cv::Point2f>& points_b,
+    const cv::Size& image_size
+) {
+    const double margin_x = image_size.width * kCentralConfirmationMarginRatio;
+    const double margin_y = image_size.height * kCentralConfirmationMarginRatio;
+    auto is_central = [&](const cv::Point2f& point) {
+        return point.x >= margin_x
+            && point.x < image_size.width - margin_x
+            && point.y >= margin_y
+            && point.y < image_size.height - margin_y;
+    };
+    int count = 0;
+    for (std::size_t index = 0; index < points_a.size(); ++index) {
+        count += is_central(points_a[index]) && is_central(points_b[index]);
+    }
+    return count;
+}
 
 DirectionalResult directional_fingerprint_score(
     const FeatureScope& scope_a,
     const FeatureScope& scope_b,
     const cv::Size& image_size,
-    bool require_central_endpoint
+    bool require_central_endpoint,
+    bool allow_central_confirmation
 ) {
     if (scope_a.descriptors.empty() || scope_b.descriptors.rows < 2) {
         return {};
@@ -698,12 +738,17 @@ DirectionalResult directional_fingerprint_score(
 
     std::vector<cv::Point2f> inlier_points_a;
     std::vector<cv::Point2f> inlier_points_b;
+    inlier_points_a.reserve(matches.size());
+    inlier_points_b.reserve(matches.size());
     for (int index = 0; index < static_cast<int>(matches.size()); ++index) {
         if (inlier_mask.at<unsigned char>(index) != 0) {
             inlier_points_a.push_back(points_a[index]);
             inlier_points_b.push_back(points_b[index]);
         }
     }
+    const int central_inliers = central_inlier_count(
+        inlier_points_a, inlier_points_b, image_size
+    );
     const int required_cells = std::min(kMinSpatialInlierCells, inlier_count);
     const int occupied_cells = std::min(
         inlier_grid_cell_count(inlier_points_a, image_size),
@@ -712,8 +757,11 @@ DirectionalResult directional_fingerprint_score(
     const bool complete_spatial = occupied_cells >= required_cells;
     double spatial_evidence = 1.0;
     if (!complete_spatial) {
-        if (occupied_cells < required_cells - 1 || inlier_count < kMinFingerprintInliers) {
-            return {0.0, transform, inlier_count, false};
+        if ((occupied_cells < required_cells - 1
+                || inlier_count < kMinFingerprintInliers)
+            && (!allow_central_confirmation
+                || central_inliers < kMinCentralConfirmationInliers)) {
+            return {0.0, transform, inlier_count, false, central_inliers};
         }
         spatial_evidence = kPartialSpatialEvidenceFactor;
     }
@@ -724,6 +772,7 @@ DirectionalResult directional_fingerprint_score(
         transform,
         inlier_count,
         complete_spatial,
+        central_inliers,
     };
 }
 
@@ -864,25 +913,152 @@ double aligned_edge_containment(
     return std::max(precision, recall);
 }
 
-double bidirectional_fingerprint_score(
+struct CentralContentMetrics {
+    double content_error = 1.0;
+    double edge_f1 = 0.0;
+    int edge_count_a = 0;
+    int edge_count_b = 0;
+};
+
+CentralContentMetrics aligned_central_content_metrics(
+    const cv::Mat& image_a,
+    const cv::Mat& edges_a,
+    const cv::Mat& image_b,
+    const cv::Mat& edges_b,
+    const cv::Mat& transform_ab
+) {
+    cv::Mat aligned_image_a;
+    cv::Mat aligned_edges_a;
+    cv::Mat valid;
+    cv::warpAffine(image_a, aligned_image_a, transform_ab, image_a.size());
+    cv::warpAffine(edges_a, aligned_edges_a, transform_ab, edges_a.size());
+    cv::warpAffine(
+        cv::Mat(image_a.size(), CV_8U, cv::Scalar(1)),
+        valid,
+        transform_ab,
+        image_a.size()
+    );
+
+    const int margin_y = bankers_round(image_a.rows * kCentralContentMarginRatio);
+    const int margin_x = bankers_round(image_a.cols * kCentralContentMarginRatio);
+    const int channels = image_a.channels();
+    double difference = 0.0;
+    std::size_t value_count = 0;
+    int overlap = 0;
+    CentralContentMetrics result;
+    for (int y = margin_y; y < image_a.rows - margin_y; ++y) {
+        const unsigned char* aligned_pixels = aligned_image_a.ptr<unsigned char>(y);
+        const unsigned char* target_pixels = image_b.ptr<unsigned char>(y);
+        const unsigned char* aligned_edge = aligned_edges_a.ptr<unsigned char>(y);
+        const unsigned char* target_edge = edges_b.ptr<unsigned char>(y);
+        const unsigned char* valid_pixel = valid.ptr<unsigned char>(y);
+        for (int x = margin_x; x < image_a.cols - margin_x; ++x) {
+            if (valid_pixel[x] == 0) {
+                continue;
+            }
+            for (int channel = 0; channel < channels; ++channel) {
+                difference += std::abs(
+                    static_cast<int>(aligned_pixels[x * channels + channel])
+                    - static_cast<int>(target_pixels[x * channels + channel])
+                );
+                ++value_count;
+            }
+            const bool has_aligned_edge = aligned_edge[x] != 0;
+            const bool has_target_edge = target_edge[x] != 0;
+            result.edge_count_a += has_aligned_edge;
+            result.edge_count_b += has_target_edge;
+            overlap += has_aligned_edge && has_target_edge;
+        }
+    }
+    if (value_count == 0) {
+        return result;
+    }
+    result.content_error = difference / (value_count * 255.0);
+    const int edge_total = result.edge_count_a + result.edge_count_b;
+    result.edge_f1 = edge_total == 0
+        ? 1.0
+        : 2.0 * overlap / edge_total;
+    return result;
+}
+
+double central_content_factor(
+    const cv::Mat& image_a,
+    const cv::Mat& edges_a,
+    const cv::Mat& image_b,
+    const cv::Mat& edges_b,
+    const cv::Mat& transform_ab,
+    const cv::Mat& transform_ba
+) {
+    const CentralContentMetrics ab = aligned_central_content_metrics(
+        image_a, edges_a, image_b, edges_b, transform_ab
+    );
+    const CentralContentMetrics ba = aligned_central_content_metrics(
+        image_b, edges_b, image_a, edges_a, transform_ba
+    );
+    if (std::min({
+            ab.edge_count_a,
+            ab.edge_count_b,
+            ba.edge_count_a,
+            ba.edge_count_b,
+        }) < kMinCentralContentEdgePixels) {
+        return 1.0;
+    }
+
+    const double content_error = std::min(ab.content_error, ba.content_error);
+    const double edge_f1 = std::max(ab.edge_f1, ba.edge_f1);
+    const double edge_mismatch = clamp01(
+        (kCentralContentEdgeWarning - edge_f1)
+        / (kCentralContentEdgeWarning - kCentralContentEdgeReject)
+    );
+    double appearance_mismatch = clamp01(
+        (content_error - kCentralContentErrorWarning)
+        / (kCentralContentErrorReject - kCentralContentErrorWarning)
+    );
+    if (edge_f1 >= kCentralContentAppearanceEdgeIgnore) {
+        appearance_mismatch = 0.0;
+    }
+    const double mismatch = std::max(edge_mismatch, appearance_mismatch);
+    return 1.0 - kMaxCentralContentPenalty * mismatch;
+}
+
+struct ScopeFingerprintResult {
+    double score = 0.0;
+    std::optional<double> local_content_factor;
+};
+
+ScopeFingerprintResult bidirectional_fingerprint_score(
     const FingerprintFeatures& features_a,
     const FeatureScope& scope_a,
     const FingerprintFeatures& features_b,
     const FeatureScope& scope_b,
-    bool require_central_endpoint
+    bool require_central_endpoint,
+    bool allow_central_confirmation,
+    bool require_local_content_confirmation,
+    const cv::Mat& local_image_a,
+    const cv::Mat& local_edges_a,
+    const cv::Mat& local_image_b,
+    const cv::Mat& local_edges_b
 ) {
     const cv::Size image_size = features_a.gray.size();
     const DirectionalResult ab = directional_fingerprint_score(
-        scope_a, scope_b, image_size, require_central_endpoint
+        scope_a,
+        scope_b,
+        image_size,
+        require_central_endpoint,
+        allow_central_confirmation
     );
     if (ab.score == 0.0) {
-        return 0.0;
+        return {};
     }
     const DirectionalResult ba = directional_fingerprint_score(
-        scope_b, scope_a, image_size, require_central_endpoint
+        scope_b,
+        scope_a,
+        image_size,
+        require_central_endpoint,
+        allow_central_confirmation
     );
     if (ba.score == 0.0) {
-        return 0.0;
+        return {};
     }
     double score = 2.0 * ab.score * ba.score / (ab.score + ba.score);
     const double base_score = score;
@@ -890,7 +1066,7 @@ double bidirectional_fingerprint_score(
         ab.transform, ba.transform, ab.inliers, ba.inliers, image_size
     );
     if (!(ab.complete_spatial && ba.complete_spatial) && confidence.exponent <= 1.0) {
-        return 0.0;
+        return {};
     }
     if (confidence.exponent > 1.0) {
         score = 1.0 - std::pow(1.0 - score, confidence.exponent);
@@ -933,28 +1109,109 @@ double bidirectional_fingerprint_score(
             kInconsistentAppearanceExponent
         );
     }
-    return score;
+    const int central_support = allow_central_confirmation
+        ? std::min(ab.central_inliers, ba.central_inliers)
+        : 0;
+    const double central_strength = clamp01(
+        (central_support - kMinCentralConfirmationInliers + 1.0)
+        / (kFullCentralConfirmationInliers - kMinCentralConfirmationInliers + 1.0)
+    );
+    const double central_exponent = 1.0 + central_strength
+        * (kCentralConfirmationConfidenceExponent - 1.0);
+    score = 1.0 - std::pow(1.0 - score, central_exponent);
+    ScopeFingerprintResult result;
+    result.score = score;
+    if (require_local_content_confirmation
+        && ab.complete_spatial
+        && ba.complete_spatial) {
+        result.local_content_factor = central_content_factor(
+            local_image_a,
+            local_edges_a,
+            local_image_b,
+            local_edges_b,
+            ab.transform,
+            ba.transform
+        );
+    }
+    return result;
 }
 
 double fingerprint_score(
     const FingerprintFeatures& a,
-    const FingerprintFeatures& b
+    const FingerprintFeatures& b,
+    bool allow_central_confirmation,
+    bool require_local_content_confirmation,
+    const cv::Mat& local_image_a,
+    const cv::Mat& local_edges_a,
+    const cv::Mat& local_image_b,
+    const cv::Mat& local_edges_b
 ) {
-    const double strict = bidirectional_fingerprint_score(
-        a, a.strict, b, b.strict, false
+    const ScopeFingerprintResult strict = bidirectional_fingerprint_score(
+        a,
+        a.strict,
+        b,
+        b.strict,
+        false,
+        allow_central_confirmation,
+        require_local_content_confirmation,
+        local_image_a,
+        local_edges_a,
+        local_image_b,
+        local_edges_b
     );
-    const double expanded = bidirectional_fingerprint_score(
-        a, a.expanded, b, b.expanded, false
-    );
-    const double anchored = bidirectional_fingerprint_score(
-        a, a.anchored, b, b.anchored, true
-    );
-    const double secondary = std::max(expanded, anchored);
-    if (strict == 0.0) {
-        return secondary * kMissingStrictScopeFactor;
+    if (strict.score == 1.0
+        && strict.local_content_factor.value_or(1.0) == 1.0) {
+        return 1.0;
     }
-    return strict * kStrictScopeWeight
-        + std::max(strict, secondary) * (1.0 - kStrictScopeWeight);
+    const ScopeFingerprintResult expanded = bidirectional_fingerprint_score(
+        a,
+        a.expanded,
+        b,
+        b.expanded,
+        false,
+        allow_central_confirmation,
+        require_local_content_confirmation,
+        local_image_a,
+        local_edges_a,
+        local_image_b,
+        local_edges_b
+    );
+    const ScopeFingerprintResult anchored = bidirectional_fingerprint_score(
+        a,
+        a.anchored,
+        b,
+        b.anchored,
+        true,
+        allow_central_confirmation,
+        require_local_content_confirmation,
+        local_image_a,
+        local_edges_a,
+        local_image_b,
+        local_edges_b
+    );
+    const double secondary = std::max(expanded.score, anchored.score);
+    double score = 0.0;
+    if (strict.score == 0.0) {
+        score = secondary * kMissingStrictScopeFactor;
+    } else {
+        score = strict.score * kStrictScopeWeight
+            + std::max(strict.score, secondary) * (1.0 - kStrictScopeWeight);
+    }
+
+    // A wider SIFT scope must not bypass negative evidence from a verified
+    // strict-scope alignment.
+    std::optional<double> local_factor = strict.local_content_factor;
+    if (!local_factor.has_value()) {
+        if (expanded.local_content_factor.has_value()) {
+            local_factor = expanded.local_content_factor;
+        }
+        if (anchored.local_content_factor.has_value()) {
+            local_factor = local_factor.has_value()
+                ? std::min(*local_factor, *anchored.local_content_factor)
+                : anchored.local_content_factor;
+        }
+    }
+    return score * local_factor.value_or(1.0);
 }
 
 struct PreparedTile {
@@ -965,7 +1222,7 @@ struct PreparedTile {
           edges(image_edges_from_gray(gray)),
           edge_bits(edge_rows(edges)),
           edge_total(edge_count(edge_bits)),
-          gradient_features(prepare_fingerprint_features(gradient_magnitude(image))) {
+          gradient_features(prepare_fingerprint_features(gradient_magnitude(gray))) {
         if (prepare_raw_features) {
             raw_features.emplace(
                 prepare_fingerprint_features(image, gray, edges)
@@ -1011,8 +1268,9 @@ std::unique_ptr<PreparedImageData> prepare_image(
     auto result = std::make_unique<PreparedImageData>();
     const std::vector<cv::Mat> tiles = split_working_tiles(normalized);
     result->tiles.reserve(tiles.size());
+    const bool prepare_tile_raw_features = prepare_raw_features && tiles.size() == 1;
     for (const cv::Mat& tile : tiles) {
-        result->tiles.emplace_back(tile, prepare_raw_features);
+        result->tiles.emplace_back(tile, prepare_tile_raw_features);
     }
     return result;
 }
@@ -1041,17 +1299,34 @@ double picture_match_prepared_64(
         )
     ) / 2.0;
     outline_score *= appearance_score(ordered_a->image, ordered_b->image);
+    if (outline_score == 1.0) {
+        return 1.0;
+    }
 
     double fingerprint = fingerprint_score(
         ordered_a->gradient_features,
-        ordered_b->gradient_features
+        ordered_b->gradient_features,
+        true,
+        require_grayscale_confirmation,
+        ordered_a->image,
+        ordered_a->edges,
+        ordered_b->image,
+        ordered_b->edges
     );
+    // Raw confirmation only lowers fingerprint, so it cannot beat outline here.
     if (require_grayscale_confirmation
         && fingerprint > 0.0
-        && fingerprint < kMinSelfSufficientFingerprintScore) {
+        && fingerprint < kMinSelfSufficientFingerprintScore
+        && fingerprint > outline_score) {
         fingerprint *= std::sqrt(fingerprint_score(
             ordered_a->ensure_raw_features(),
-            ordered_b->ensure_raw_features()
+            ordered_b->ensure_raw_features(),
+            false,
+            false,
+            ordered_a->image,
+            ordered_a->edges,
+            ordered_b->image,
+            ordered_b->edges
         ));
     }
     return std::max(outline_score, fingerprint);
@@ -1064,15 +1339,34 @@ double match_prepared_images(
     if (a.tiles.size() != b.tiles.size()) {
         throw std::runtime_error("normalized image tile counts differ");
     }
+    const bool require_grayscale_confirmation = a.tiles.size() == 1;
     double total = 0.0;
+    double squared_total = 0.0;
     for (std::size_t index = 0; index < a.tiles.size(); ++index) {
-        total += picture_match_prepared_64(
+        const double score = picture_match_prepared_64(
             a.tiles[index],
             b.tiles[index],
-            true
+            require_grayscale_confirmation
         );
+        total += score;
+        squared_total += score * score;
     }
-    return total / a.tiles.size();
+    const double tile_count = static_cast<double>(a.tiles.size());
+    const double arithmetic_mean = total / tile_count;
+    if (a.tiles.size() < 4 || total == 0.0 || squared_total == 0.0) {
+        return arithmetic_mean;
+    }
+
+    // Discount isolated failed tiles only when useful evidence is distributed
+    // across most of a long image. One accidental high tile therefore keeps
+    // the ordinary mean, while repeated corresponding structures can agree.
+    const double effective_tile_count = total * total / squared_total;
+    const double blend = clamp01(
+        (effective_tile_count - tile_count / 2.0) / (tile_count / 6.0)
+    );
+    const double evidence_weighted_mean = squared_total / total;
+    return arithmetic_mean
+        + blend * (evidence_weighted_mean - arithmetic_mean);
 }
 
 class PreparedImage {

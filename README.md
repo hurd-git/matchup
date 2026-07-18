@@ -4,6 +4,12 @@
 with a small Python API. It uses OpenCV SIFT, geometric verification, edge
 agreement and appearance checks. It does not use neural-network models.
 
+The current algorithm uses a fixed 64 x 64 working unit, bidirectional SIFT
+geometry, edge and appearance evidence, and aligned central-content
+confirmation. See [MATCHING_IMPLEMENTATION.md](MATCHING_IMPLEMENTATION.md) for
+the current design and [MATCHING_FLOWCHART.md](MATCHING_FLOWCHART.md) for the
+complete Mermaid flowcharts.
+
 The first release supports 64-bit Windows and CPython 3.10 through 3.14.
 
 ## Installation
@@ -43,6 +49,11 @@ score_hot_hot = reference.match(other)
 Equal-size prepared images reuse all preprocessing. A cross-size prepared
 match intentionally falls back to a cold resize and does not create cached
 pair-specific variants.
+
+Internally, images whose short edge is above 64 are reduced proportionally to
+a 64-pixel short edge. Smaller images are not enlarged. Long images are split
+into corresponding 64 x 64 windows and their evidence is aggregated without
+allowing one accidental high tile to dominate the result.
 
 The fixed working-unit API is also available:
 

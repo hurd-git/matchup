@@ -19,6 +19,32 @@ def structured_image(height: int, width: int, channels: int = 3) -> np.ndarray:
     return result
 
 
+def draw_shared_template_icon(use_star: bool) -> np.ndarray:
+    image = np.full((64, 64, 3), 35, dtype=np.uint8)
+    y, x = np.indices((64, 64))
+    ellipse = ((x - 32) / 24) ** 2 + ((y - 33) / 28) ** 2 <= 1
+    image[ellipse] = (225, 225, 210)
+    border = np.logical_and(
+        ((x - 32) / 24) ** 2 + ((y - 33) / 28) ** 2 <= 1.0,
+        ((x - 32) / 21) ** 2 + ((y - 33) / 25) ** 2 >= 1.0,
+    )
+    image[border] = (25, 25, 25)
+    image[39:42, 12:53] = (80, 100, 180)
+    if use_star:
+        center = np.logical_or(
+            np.logical_and(np.abs(x - 32) <= 5, np.abs(y - 32) <= 15),
+            np.logical_and(np.abs(y - 32) <= 5, np.abs(x - 32) <= 15),
+        )
+    else:
+        center = np.logical_or(
+            np.abs((x - 32) - (y - 32)) <= 3,
+            np.abs((x - 32) + (y - 32)) <= 3,
+        )
+        center &= np.logical_and(np.abs(x - 32) <= 15, np.abs(y - 32) <= 15)
+    image[center] = (40, 180, 240)
+    return image
+
+
 class MatchupApiTests(unittest.TestCase):
     def test_identical_image_scores_one(self) -> None:
         image = structured_image(80, 80)
@@ -90,6 +116,37 @@ class MatchupApiTests(unittest.TestCase):
                 structured_image(64, 64, 3),
                 structured_image(80, 80, 4),
             )
+
+    def test_shared_outer_template_with_different_center_is_penalized(self) -> None:
+        image_a = draw_shared_template_icon(True)
+        image_b = draw_shared_template_icon(False)
+        self.assertLess(matchup.picture_match(image_a, image_b), 0.60)
+
+    def test_matching_foreground_tolerates_colorful_background(self) -> None:
+        icon = draw_shared_template_icon(True)
+        image_a = icon.copy()
+        image_b = icon.copy()
+        y, x = np.indices((64, 64))
+        foreground = np.any(icon != (35, 35, 35), axis=2)
+        background_a = np.stack(
+            ((x * 7) % 180, (y * 9) % 180, ((x + y) * 5) % 180), axis=2
+        ).astype(np.uint8)
+        background_b = np.stack(
+            (((x + y) * 11) % 190, (x * 3) % 190, (y * 13) % 190), axis=2
+        ).astype(np.uint8)
+        image_a[~foreground] = background_a[~foreground]
+        image_b[~foreground] = background_b[~foreground]
+
+        self.assertGreater(matchup.picture_match(image_a, image_b), 0.80)
+
+    def test_multi_tile_cold_and_hot_paths_are_identical(self) -> None:
+        image_a = structured_image(64, 320)
+        image_b = np.roll(image_a, shift=(1, -3), axis=(0, 1))
+        cold = matchup.picture_match(image_a, image_b)
+        prepared_a = matchup.PreparedImage(image_a)
+        prepared_b = matchup.PreparedImage(image_b)
+        self.assertEqual(cold, prepared_a.match(image_b))
+        self.assertEqual(cold, prepared_a.match(prepared_b))
 
 
 if __name__ == "__main__":

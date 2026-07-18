@@ -8,7 +8,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "matchup"
-version = "0.1.0"
+version = "1.0.7"
 description = "Fast traditional image matching backed by C++ and OpenCV"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -61,6 +61,7 @@ benchmark = [
 minimum-version = "build-system.requires"
 build-dir = ".build/{wheel_tag}"
 cmake.build-type = "Release"
+build.tool-args = ["/m"]
 wheel.packages = ["src/matchup"]
 sdist.include = [
     "/CMakeLists.txt",
@@ -73,6 +74,8 @@ sdist.include = [
     "/NOTICE",
     "/README.md",
     "/CHANGELOG.md",
+    "/MATCHING_IMPLEMENTATION.md",
+    "/MATCHING_FLOWCHART.md",
 ]
 sdist.exclude = [
     ".build/**",
@@ -85,6 +88,8 @@ sdist.exclude = [
     "**/*.py[cod]",
     "build/**",
     "dist/**",
+    "samples*/**",
+    "t1.py",
     "wheelhouse/**",
 ]
 
